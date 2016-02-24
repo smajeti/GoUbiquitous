@@ -29,13 +29,30 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEvent;
+import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataMapItem;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.NodeApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
+
 import java.lang.ref.WeakReference;
+import java.util.Date;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -44,6 +61,9 @@ import java.util.concurrent.TimeUnit;
  * low-bit ambient mode, the text is drawn without anti-aliasing in ambient mode.
  */
 public class WeatherWatchFace extends CanvasWatchFaceService {
+
+    private final String LOG_TAG = WeatherWatchFace.class.getSimpleName();
+
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
 
@@ -83,7 +103,9 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
         }
     }
 
-    private class Engine extends CanvasWatchFaceService.Engine {
+    private class Engine extends CanvasWatchFaceService.Engine implements GoogleApiClient.ConnectionCallbacks,
+            GoogleApiClient.OnConnectionFailedListener, DataApi.DataListener, NodeApi.NodeListener {
+
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
@@ -99,6 +121,10 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
         };
         float mXOffset;
         float mYOffset;
+
+        private GoogleApiClient mGoogleApiClient;
+        private String temperatureLow;
+        private String temperatureHigh;
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
@@ -124,12 +150,26 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             mTextPaint = new Paint();
             mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
 
+            mGoogleApiClient = new GoogleApiClient.Builder(WeatherWatchFace.this)
+                    .addApi(Wearable.API)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .build();
+            mGoogleApiClient.connect();
+            Wearable.DataApi.addListener(mGoogleApiClient, this);
+            Wearable.NodeApi.addListener(mGoogleApiClient, this);
+
             mTime = new Time();
         }
 
         @Override
         public void onDestroy() {
             mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
+            if (mGoogleApiClient.isConnected()) {
+                Wearable.DataApi.removeListener(mGoogleApiClient, this);
+                Wearable.NodeApi.removeListener(mGoogleApiClient, this);
+                mGoogleApiClient.disconnect();
+            }
             super.onDestroy();
         }
 
@@ -268,5 +308,70 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
         }
+
+        // Connection related functions
+
+        int counter = 200;
+        @Override
+        public void onConnected(@Nullable Bundle bundle) {
+            Log.d(LOG_TAG, "onConnected");
+            if (temperatureLow == null) {
+                sendStepCount(++counter, new Date().getTime());
+            }
+        }
+
+        @Override
+        public void onConnectionSuspended(int i) {
+            Log.d(LOG_TAG, "onConnectionSuspended");
+        }
+
+        @Override
+        public void onDataChanged(DataEventBuffer dataEventBuffer) {
+            Log.d(LOG_TAG, "onDataChanged " + dataEventBuffer);
+            for (DataEvent event : dataEventBuffer) {
+                if (event.getType() == DataEvent.TYPE_CHANGED) {
+                    DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
+                    Log.d(LOG_TAG, "DataItem Changed " + dataMapItem.getDataMap().getInt("step-count"));
+                }
+            }
+        }
+
+        @Override
+        public void onPeerConnected(Node node) {
+            Log.d(LOG_TAG, "onPeerConnected");
+        }
+
+        @Override
+        public void onPeerDisconnected(Node node) {
+            Log.d(LOG_TAG, "onPeerDisconnected");
+        }
+
+        @Override
+        public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+            Log.d(LOG_TAG, "onConnectionFailed");
+            Wearable.DataApi.removeListener(mGoogleApiClient, this);
+            Wearable.NodeApi.removeListener(mGoogleApiClient, this);
+        }
+
+        public void sendStepCount(int steps, long timestamp) {
+            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create("/step-counter");
+            putDataMapRequest.getDataMap().putInt("step-count", steps);
+            putDataMapRequest.getDataMap().putLong("timestamp", timestamp);
+
+            PutDataRequest request = putDataMapRequest.asPutDataRequest();
+
+            Wearable.DataApi.putDataItem(mGoogleApiClient, request)
+                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                        @Override
+                        public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                            if (dataItemResult.getStatus().isSuccess()) {
+                                Log.d(LOG_TAG, "Successfully sent step count data item ");
+                            } else {
+                                Log.d(LOG_TAG, "Failed to send step count data item ");
+                            }
+                        }
+                    });
+        }
+
     }
 }
