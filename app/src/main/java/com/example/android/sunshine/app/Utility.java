@@ -44,6 +44,17 @@ import java.util.Date;
 import java.util.Locale;
 
 public class Utility {
+    private static final String LOG_TAG = Utility.class.getName();
+
+    public static final String GET_FORECAST_PATH = "/weather-forecast-get";
+    public static final String POST_FORECAST_PATH = "/weather-forecast-post";
+    public static final String TIMELINE_KEY = "timeline";
+    public static final String CURRENT_TIME_VAL = "current-time";
+    public static final String TIMESTAMP_KEY = "timestamp";
+    public static final String LOW_TEMP_KEY = "low-temperature";
+    public static final String HIGH_TEMP_KEY = "high-temperature";
+    public static final String ICON_KEY = "weather-icon";
+
     public static String getPreferredLocation(Context context) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         return prefs.getString(context.getString(R.string.pref_location_key),
@@ -590,6 +601,49 @@ public class Utility {
         spe.apply();
     }
 
+    /**
+     * Queries the current weather data and creates DataMapRequest and sends it to
+     * all listeners
+     * @param context used to access resources
+     * @param googleApiClient
+     */
+    public static void sendCurrentForecastToWear(Context context, GoogleApiClient googleApiClient) {
+        SunshineSyncAdapter.WeatherInfo weatherInfo = SunshineSyncAdapter.getCurrentWeatherInfo(context);
+        sendCurrentForecastToWear(context, googleApiClient, weatherInfo);
+    }
+
+    public static void sendCurrentForecastToWear(Context context, GoogleApiClient googleApiClient,
+                                                 SunshineSyncAdapter.WeatherInfo weatherInfo) {
+        int iconId = Utility.getIconResourceForWeatherCondition(weatherInfo.weatherId);
+        Resources resources = context.getResources();
+        Bitmap bitmap = BitmapFactory.decodeResource(resources, iconId);
+
+        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(POST_FORECAST_PATH);
+        putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.lowTemperature));
+        putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.highTemperature));
+        putDataMapRequest.getDataMap().putAsset(ICON_KEY, Utility.toAsset(bitmap));
+        putDataMapRequest.getDataMap().putLong(TIMESTAMP_KEY, new Date().getTime());
+
+        final PutDataRequest request = putDataMapRequest.asPutDataRequest();
+
+        Wearable.DataApi.putDataItem(googleApiClient, request)
+                .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                    @Override
+                    public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                        if (dataItemResult.getStatus().isSuccess()) {
+                            Log.d(LOG_TAG, "Successfully sent current forecast ");
+                        } else {
+                            Log.d(LOG_TAG, "Failed to send step current forecast ");
+                        }
+                    }
+                });
+    }
+
+    /**
+     * Creates and returns Asset object for a given bitmap
+     * @param bitmap
+     * @return
+     */
     public static Asset toAsset(Bitmap bitmap) {
         ByteArrayOutputStream byteStream = null;
         try {

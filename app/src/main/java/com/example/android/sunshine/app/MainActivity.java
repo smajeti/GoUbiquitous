@@ -66,15 +66,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     private final static int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
     public static final String SENT_TOKEN_TO_SERVER = "sentTokenToServer";
 
-    public static final String GET_FORECAST_PATH = "/weather-forecast-get";
-    public static final String POST_FORECAST_PATH = "/weather-forecast-post";
-    public static final String TIMELINE_KEY = "timeline";
-    public static final String CURRENT_TIME_VAL = "current-time";
-    public static final String TIMESTAMP_KEY = "timestamp";
-    public static final String LOW_TEMP_KEY = "low-temperature";
-    public static final String HIGH_TEMP_KEY = "high-temperature";
-    public static final String ICON_KEY = "weather-icon";
-
     /**
      * Request code for launching the Intent to resolve Google Play services errors.
      */
@@ -284,10 +275,10 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         for (DataEvent event : dataEventBuffer) {
             if (event.getType() == DataEvent.TYPE_CHANGED) {
                 String path = event.getDataItem().getUri().getPath();
-                if (GET_FORECAST_PATH.equals(path)) {
+                if (Utility.GET_FORECAST_PATH.equals(path)) {
                     DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
-                    String timeline = dataMapItem.getDataMap().getString(TIMELINE_KEY);
-                    if (CURRENT_TIME_VAL.equals(timeline)) {
+                    String timeline = dataMapItem.getDataMap().getString(Utility.TIMELINE_KEY);
+                    if (Utility.CURRENT_TIME_VAL.equals(timeline)) {
                         new SendForecastAsync().execute();
                     }
                 }
@@ -327,38 +318,11 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         Log.d(LOG_TAG, "onPeerDisconnected");
     }
 
-    public static void sendCurrentForecastToWear(Context context, GoogleApiClient googleApiClient) {
-        SunshineSyncAdapter.WeatherInfo weatherInfo = SunshineSyncAdapter.getCurrentWeatherInfo(context);
-        int iconId = Utility.getIconResourceForWeatherCondition(weatherInfo.weatherId);
-        Resources resources = context.getResources();
-        Bitmap bitmap = BitmapFactory.decodeResource(resources, iconId);
-
-        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(POST_FORECAST_PATH);
-        putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.lowTemperature));
-        putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.highTemperature));
-        putDataMapRequest.getDataMap().putAsset(ICON_KEY, Utility.toAsset(bitmap));
-        putDataMapRequest.getDataMap().putLong(TIMESTAMP_KEY, new Date().getTime());
-
-        final PutDataRequest request = putDataMapRequest.asPutDataRequest();
-
-        Wearable.DataApi.putDataItem(googleApiClient, request)
-                .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
-                    @Override
-                    public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
-                        if (dataItemResult.getStatus().isSuccess()) {
-                            Log.d(LOG_TAG, "Successfully sent current forecast ");
-                        } else {
-                            Log.d(LOG_TAG, "Failed to send step current forecast ");
-                        }
-                    }
-                });
-    }
-
     class SendForecastAsync extends AsyncTask<Void, Void, Void> {
 
         @Override
         protected Void doInBackground(Void... voids) {
-            sendCurrentForecastToWear(MainActivity.this, mGoogleApiClient);
+            Utility.sendCurrentForecastToWear(MainActivity.this, mGoogleApiClient);
             return null;
         }
     }

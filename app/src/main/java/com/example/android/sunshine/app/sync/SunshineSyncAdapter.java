@@ -87,6 +87,12 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     public static final int LOCATION_STATUS_UNKNOWN = 3;
     public static final int LOCATION_STATUS_INVALID = 4;
 
+    private WearNotifyIface wearNotifyHandler;
+
+    public interface WearNotifyIface {
+        void notifyWearDevices();
+    }
+
     public static class WeatherInfo {
         public int weatherId;
         public double lowTemperature;
@@ -353,6 +359,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
+                if (wearNotifyHandler != null) {
+                    wearNotifyHandler.notifyWearDevices();
+                }
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
             setLocationStatus(getContext(), LOCATION_STATUS_OK);
@@ -553,6 +562,10 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         locationCursor.close();
         // Wait, that worked?  Yes!
         return locationId;
+    }
+
+    public void setWearNotifyHandler(WearNotifyIface handler) {
+        this.wearNotifyHandler = handler;
     }
 
     /**

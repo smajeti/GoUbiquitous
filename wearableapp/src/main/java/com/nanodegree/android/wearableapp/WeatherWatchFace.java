@@ -503,7 +503,7 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             @Override
             protected void onPostExecute(Bitmap bitmap) {
                 if(bitmap != null) {
-                    Log.d(LOG_TAG, "Setting background image on second page..");
+                    Log.d(LOG_TAG, "Setting weather image..");
                     mWeatherBitMap = bitmap;
                 }
             }

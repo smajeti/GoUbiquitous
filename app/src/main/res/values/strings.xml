@@ -226,4 +226,7 @@
     <string name="gcm_weather_alert">Heads up: %1$s in %2$s!</string>
     // TODO: Get the SenderID from the Developer Console
     <string name="gcm_defaultSenderId" translatable="false"></string>
+    <string name="pref_last_low_temp">last_low_temperature</string>
+    <string name="pref_last_high_temp">last_high_temperature</string>
+    <string name="pref_last_temperature_icon_id">last_temperature_icon_id</string>
 </resources>
