@@ -87,6 +87,12 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     public static final int LOCATION_STATUS_UNKNOWN = 3;
     public static final int LOCATION_STATUS_INVALID = 4;
 
+    public static class WeatherInfo {
+        public int weatherId;
+        public double lowTemperature;
+        public double highTemperature;
+        public String description;
+    }
     public SunshineSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
     }
@@ -391,23 +397,14 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
 
             if (System.currentTimeMillis() - lastSync >= DAY_IN_MILLIS) {
                 // Last sync was more than 1 day ago, let's send a notification with the weather.
-                String locationQuery = Utility.getPreferredLocation(context);
+                WeatherInfo weatherInfo = getCurrentWeatherInfo(context);
 
-                Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+                if (weatherInfo != null) {
 
-                // we'll query our contentProvider, as always
-                Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
-
-                if (cursor.moveToFirst()) {
-                    int weatherId = cursor.getInt(INDEX_WEATHER_ID);
-                    double high = cursor.getDouble(INDEX_MAX_TEMP);
-                    double low = cursor.getDouble(INDEX_MIN_TEMP);
-                    String desc = cursor.getString(INDEX_SHORT_DESC);
-
-                    int iconId = Utility.getIconResourceForWeatherCondition(weatherId);
+                    int iconId = Utility.getIconResourceForWeatherCondition(weatherInfo.weatherId);
                     Resources resources = context.getResources();
-                    int artResourceId = Utility.getArtResourceForWeatherCondition(weatherId);
-                    String artUrl = Utility.getArtUrlForWeatherCondition(context, weatherId);
+                    int artResourceId = Utility.getArtResourceForWeatherCondition(weatherInfo.weatherId);
+                    String artUrl = Utility.getArtUrlForWeatherCondition(context, weatherInfo.weatherId);
 
                     // On Honeycomb and higher devices, we can retrieve the size of the large icon
                     // Prior to that, we use a fixed size
@@ -437,9 +434,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
 
                     // Define the text of the forecast.
                     String contentText = String.format(context.getString(R.string.format_notification),
-                            desc,
-                            Utility.formatTemperature(context, high),
-                            Utility.formatTemperature(context, low));
+                            weatherInfo.description,
+                            Utility.formatTemperature(context, weatherInfo.highTemperature),
+                            Utility.formatTemperature(context, weatherInfo.lowTemperature));
 
                     // NotificationCompatBuilder is a very convenient way to build backward-compatible
                     // notifications.  Just throw in some data.
@@ -478,9 +475,34 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                     editor.putLong(lastNotificationKey, System.currentTimeMillis());
                     editor.commit();
                 }
-                cursor.close();
             }
         }
+    }
+
+    public static WeatherInfo getCurrentWeatherInfo(Context context) {
+        String locationQuery = Utility.getPreferredLocation(context);
+
+        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+
+        // we'll query our contentProvider, as always
+        Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+        WeatherInfo weatherInfo = null;
+        if (cursor.moveToFirst()) {
+            int weatherId = cursor.getInt(INDEX_WEATHER_ID);
+            double high = cursor.getDouble(INDEX_MAX_TEMP);
+            double low = cursor.getDouble(INDEX_MIN_TEMP);
+            String desc = cursor.getString(INDEX_SHORT_DESC);
+
+            int iconId = Utility.getIconResourceForWeatherCondition(weatherId);
+            weatherInfo = new WeatherInfo();
+            weatherInfo.weatherId = weatherId;
+            weatherInfo.highTemperature = high;
+            weatherInfo.lowTemperature = low;
+            weatherInfo.description = desc;
+        }
+        cursor.close();
+
+        return weatherInfo;
     }
 
     /**

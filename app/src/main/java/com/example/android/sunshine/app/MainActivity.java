@@ -15,10 +15,15 @@
  */
 package com.example.android.sunshine.app;
 
+import android.content.Context;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
@@ -56,10 +61,19 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         GoogleApiClient.OnConnectionFailedListener, GoogleApiClient.ConnectionCallbacks,
         DataApi.DataListener, NodeApi.NodeListener {
 
-    private final String LOG_TAG = MainActivity.class.getSimpleName();
+    private static final String LOG_TAG = MainActivity.class.getSimpleName();
     private static final String DETAILFRAGMENT_TAG = "DFTAG";
     private final static int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
     public static final String SENT_TOKEN_TO_SERVER = "sentTokenToServer";
+
+    public static final String GET_FORECAST_PATH = "/weather-forecast-get";
+    public static final String POST_FORECAST_PATH = "/weather-forecast-post";
+    public static final String TIMELINE_KEY = "timeline";
+    public static final String CURRENT_TIME_VAL = "current-time";
+    public static final String TIMESTAMP_KEY = "timestamp";
+    public static final String LOW_TEMP_KEY = "low-temperature";
+    public static final String HIGH_TEMP_KEY = "high-temperature";
+    public static final String ICON_KEY = "weather-icon";
 
     /**
      * Request code for launching the Intent to resolve Google Play services errors.
@@ -256,7 +270,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         mResolvingError = false;
         Wearable.DataApi.addListener(mGoogleApiClient, this);
         Wearable.NodeApi.addListener(mGoogleApiClient, this);
-        sendStepCount(++counter, new Date().getTime());
     }
 
     @Override
@@ -267,10 +280,17 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     @Override
     public void onDataChanged(DataEventBuffer dataEventBuffer) {
         Log.d(LOG_TAG, "onDataChanged " + dataEventBuffer);
+
         for (DataEvent event : dataEventBuffer) {
             if (event.getType() == DataEvent.TYPE_CHANGED) {
-                DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
-                Log.d(LOG_TAG, "DataItem Changed " + dataMapItem.getDataMap().getInt("step-count"));
+                String path = event.getDataItem().getUri().getPath();
+                if (GET_FORECAST_PATH.equals(path)) {
+                    DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
+                    String timeline = dataMapItem.getDataMap().getString(TIMELINE_KEY);
+                    if (CURRENT_TIME_VAL.equals(timeline)) {
+                        new SendForecastAsync().execute();
+                    }
+                }
             }
         }
     }
@@ -297,26 +317,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         }
     }
 
-    public void sendStepCount(int steps, long timestamp) {
-        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create("/step-counter");
-        putDataMapRequest.getDataMap().putInt("step-count", steps);
-        putDataMapRequest.getDataMap().putLong("timestamp", timestamp);
-
-        PutDataRequest request = putDataMapRequest.asPutDataRequest();
-
-        Wearable.DataApi.putDataItem(mGoogleApiClient, request)
-                .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
-                    @Override
-                    public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
-                        if (dataItemResult.getStatus().isSuccess()) {
-                            Log.d(LOG_TAG, "Successfully sent step count data item ");
-                        } else {
-                            Log.d(LOG_TAG, "Failed to send step count data item ");
-                        }
-                    }
-                });
-    }
-
     @Override
     public void onPeerConnected(Node node) {
         Log.d(LOG_TAG, "onPeerConnected");
@@ -326,4 +326,41 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     public void onPeerDisconnected(Node node) {
         Log.d(LOG_TAG, "onPeerDisconnected");
     }
+
+    public static void sendCurrentForecastToWear(Context context, GoogleApiClient googleApiClient) {
+        SunshineSyncAdapter.WeatherInfo weatherInfo = SunshineSyncAdapter.getCurrentWeatherInfo(context);
+        int iconId = Utility.getIconResourceForWeatherCondition(weatherInfo.weatherId);
+        Resources resources = context.getResources();
+        Bitmap bitmap = BitmapFactory.decodeResource(resources, iconId);
+
+        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(POST_FORECAST_PATH);
+        putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.lowTemperature));
+        putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, Utility.formatTemperature(context, weatherInfo.highTemperature));
+        putDataMapRequest.getDataMap().putAsset(ICON_KEY, Utility.toAsset(bitmap));
+        putDataMapRequest.getDataMap().putLong(TIMESTAMP_KEY, new Date().getTime());
+
+        final PutDataRequest request = putDataMapRequest.asPutDataRequest();
+
+        Wearable.DataApi.putDataItem(googleApiClient, request)
+                .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                    @Override
+                    public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                        if (dataItemResult.getStatus().isSuccess()) {
+                            Log.d(LOG_TAG, "Successfully sent current forecast ");
+                        } else {
+                            Log.d(LOG_TAG, "Failed to send step current forecast ");
+                        }
+                    }
+                });
+    }
+
+    class SendForecastAsync extends AsyncTask<Void, Void, Void> {
+
+        @Override
+        protected Void doInBackground(Void... voids) {
+            sendCurrentForecastToWear(MainActivity.this, mGoogleApiClient);
+            return null;
+        }
+    }
+
 }

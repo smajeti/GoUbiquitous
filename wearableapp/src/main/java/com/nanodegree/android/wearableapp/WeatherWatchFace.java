@@ -21,11 +21,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -41,6 +44,7 @@ import android.view.WindowInsets;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.Asset;
 import com.google.android.gms.wearable.DataApi;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
@@ -51,6 +55,7 @@ import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
 import com.google.android.gms.wearable.Wearable;
 
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.Date;
 import java.util.TimeZone;
@@ -72,6 +77,15 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
      * displayed in interactive mode.
      */
     private static final long INTERACTIVE_UPDATE_RATE_MS = TimeUnit.SECONDS.toMillis(1);
+
+    public static final String GET_FORECAST_PATH = "/weather-forecast-get";
+    public static final String POST_FORECAST_PATH = "/weather-forecast-post";
+    public static final String TIMELINE_KEY = "timeline";
+    public static final String CURRENT_TIME_VAL = "current-time";
+    public static final String TIMESTAMP_KEY = "timestamp";
+    public static final String LOW_TEMP_KEY = "low-temperature";
+    public static final String HIGH_TEMP_KEY = "high-temperature";
+    public static final String ICON_KEY = "weather-icon";
 
     /**
      * Handler message id for updating the time periodically in interactive mode.
@@ -109,7 +123,11 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
-        Paint mTextPaint;
+        Paint mPrimaryTextPaint;
+        Paint mSecondaryTextPaint;
+        Paint mHighTempPaint;
+        Paint mLowTempPaint;
+        Paint mGrayTempPaint;
         boolean mAmbient;
         Time mTime;
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
@@ -121,16 +139,20 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
         };
         float mXOffset;
         float mYOffset;
-
-        private GoogleApiClient mGoogleApiClient;
-        private String temperatureLow;
-        private String temperatureHigh;
+        float mPrimaryTextSize;
+        float mSecondaryTextSize;
+        float mTempTextSize;
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
          */
         boolean mLowBitAmbient;
+        private Bitmap mWeatherBitMap;
+
+        private GoogleApiClient mGoogleApiClient;
+        private String temperatureLow;
+        private String temperatureHigh;
 
         @Override
         public void onCreate(SurfaceHolder holder) {
@@ -145,10 +167,15 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
             mBackgroundPaint = new Paint();
-            mBackgroundPaint.setColor(resources.getColor(R.color.background));
+            mBackgroundPaint.setColor(resources.getColor(R.color.background_color));
 
-            mTextPaint = new Paint();
-            mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
+            mPrimaryTextPaint = createTextPaint(resources.getColor(R.color.primary_text_color));
+            mSecondaryTextPaint = createTextPaint(resources.getColor(R.color.secondary_text_color));
+            mHighTempPaint = createTextPaint(resources.getColor(R.color.primary_text_color));
+            mLowTempPaint = createTextPaint(resources.getColor(R.color.secondary_text_color));
+            mGrayTempPaint = createTextPaint(resources.getColor(R.color.gray_temp_text_color));
+
+            mWeatherBitMap = null;
 
             mGoogleApiClient = new GoogleApiClient.Builder(WeatherWatchFace.this)
                     .addApi(Wearable.API)
@@ -226,10 +253,18 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             boolean isRound = insets.isRound();
             mXOffset = resources.getDimension(isRound
                     ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
-            float textSize = resources.getDimension(isRound
-                    ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
+            mPrimaryTextSize = resources.getDimension(isRound
+                    ? R.dimen.primary_text_size_round : R.dimen.primary_text_size_square);
+            mSecondaryTextSize = resources.getDimension(isRound
+                    ? R.dimen.secondary_text_size_round : R.dimen.secondary_text_size_square);
+            mTempTextSize = resources.getDimension(isRound
+                    ? R.dimen.temp_text_size_round : R.dimen.temp_text_size_square);
 
-            mTextPaint.setTextSize(textSize);
+            mPrimaryTextPaint.setTextSize(mPrimaryTextSize);
+            mSecondaryTextPaint.setTextSize(mSecondaryTextSize);
+            mHighTempPaint.setTextSize(mTempTextSize);
+            mLowTempPaint.setTextSize(mTempTextSize);
+            mGrayTempPaint.setTextSize(mTempTextSize);
         }
 
         @Override
@@ -250,7 +285,9 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             if (mAmbient != inAmbientMode) {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
-                    mTextPaint.setAntiAlias(!inAmbientMode);
+                    mPrimaryTextPaint.setAntiAlias(!inAmbientMode);
+                    mHighTempPaint.setAntiAlias(!inAmbientMode);
+                    mGrayTempPaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -271,10 +308,63 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
 
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
-            String text = mAmbient
+            String primaryText = mAmbient
                     ? String.format("%d:%02d", mTime.hour, mTime.minute)
                     : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
-            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+
+            Rect primaryTextBounds = new Rect();
+            mPrimaryTextPaint.getTextBounds(primaryText, 0, primaryText.length(), primaryTextBounds);
+
+            String secondaryText = null;
+            Rect secondaryTextBounds = new Rect();
+            if (!mAmbient) {
+                secondaryText = mTime.format("%a, %b %d %Y");
+                mSecondaryTextPaint.getTextBounds(secondaryText, 0, secondaryText.length(), secondaryTextBounds);
+            }
+
+            //float timeXLen = mPrimaryTextPaint.measureText(text);
+
+            mYOffset = (bounds.height() / 2.0f) - primaryTextBounds.height();
+
+
+            float xoffsest = (bounds.width() - primaryTextBounds.width()) / 2.0f;
+            canvas.drawText(primaryText, xoffsest, mYOffset, mPrimaryTextPaint);
+
+            Rect lowTempTextBounds = new Rect();
+            Rect highTempTextBounds = new Rect();
+            if (temperatureHigh != null) {
+                mHighTempPaint.getTextBounds(temperatureHigh, 0, temperatureHigh.length(), highTempTextBounds);
+            }
+            if (temperatureLow != null) {
+                mLowTempPaint.getTextBounds(temperatureLow, 0, temperatureLow.length(), lowTempTextBounds);
+            }
+
+            if (!mAmbient) {
+                xoffsest = (bounds.width() - secondaryTextBounds.width()) / 2.0f;
+                mYOffset += 1.5f * secondaryTextBounds.height();
+                canvas.drawText(secondaryText.toUpperCase(), xoffsest, mYOffset, mSecondaryTextPaint);
+
+                if (mWeatherBitMap != null) {
+                    mYOffset += secondaryTextBounds.height();
+                    xoffsest = (bounds.width() - mWeatherBitMap.getWidth() - (1.5f * highTempTextBounds.width()) - (1.5f * lowTempTextBounds.width())) / 2.0f;
+                    canvas.drawBitmap(mWeatherBitMap, xoffsest, mYOffset, null);
+
+                    if ((temperatureHigh != null) && (temperatureLow != null)) {
+                        mYOffset += (mWeatherBitMap.getHeight() + highTempTextBounds.height()) / 2.0f;
+                        xoffsest += mWeatherBitMap.getWidth() + (0.5f * highTempTextBounds.width());
+                        canvas.drawText(temperatureHigh, xoffsest, mYOffset, mHighTempPaint);
+
+                        xoffsest += 1.25f * highTempTextBounds.width();
+                        canvas.drawText(temperatureLow, xoffsest, mYOffset, mLowTempPaint);
+                    }
+                }
+            } else if ((temperatureHigh != null) && (temperatureLow != null)) {
+                xoffsest = (bounds.width() - highTempTextBounds.width() - (1.5f * lowTempTextBounds.width())) / 2.0f;
+                mYOffset = (bounds.height() / 2.0f) + (1.5f * highTempTextBounds.height());
+                canvas.drawText(temperatureHigh, xoffsest, mYOffset, mHighTempPaint);
+                xoffsest += 1.5f * highTempTextBounds.width();
+                canvas.drawText(temperatureLow, xoffsest, mYOffset, mGrayTempPaint);
+            }
         }
 
         /**
@@ -311,12 +401,11 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
 
         // Connection related functions
 
-        int counter = 200;
         @Override
         public void onConnected(@Nullable Bundle bundle) {
             Log.d(LOG_TAG, "onConnected");
             if (temperatureLow == null) {
-                sendStepCount(++counter, new Date().getTime());
+                new ForecastRequestAsync().execute();
             }
         }
 
@@ -330,8 +419,15 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             Log.d(LOG_TAG, "onDataChanged " + dataEventBuffer);
             for (DataEvent event : dataEventBuffer) {
                 if (event.getType() == DataEvent.TYPE_CHANGED) {
-                    DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
-                    Log.d(LOG_TAG, "DataItem Changed " + dataMapItem.getDataMap().getInt("step-count"));
+                    String path = event.getDataItem().getUri().getPath();
+                    if (POST_FORECAST_PATH.equals(path)) {
+                        DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
+                        temperatureLow = dataMapItem.getDataMap().getString(LOW_TEMP_KEY);
+                        temperatureHigh = dataMapItem.getDataMap().getString(HIGH_TEMP_KEY);
+                        Asset asset = dataMapItem.getDataMap().getAsset(ICON_KEY);
+                        new LoadBitmapAsyncTask().execute(asset);
+                        Log.d(LOG_TAG, "l: " + temperatureLow + " h: " + temperatureHigh);
+                    }
                 }
             }
         }
@@ -353,24 +449,64 @@ public class WeatherWatchFace extends CanvasWatchFaceService {
             Wearable.NodeApi.removeListener(mGoogleApiClient, this);
         }
 
-        public void sendStepCount(int steps, long timestamp) {
-            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create("/step-counter");
-            putDataMapRequest.getDataMap().putInt("step-count", steps);
-            putDataMapRequest.getDataMap().putLong("timestamp", timestamp);
+        class ForecastRequestAsync extends AsyncTask<Void, Void, Void> {
+            @Override
+            protected Void doInBackground(Void... voids) {
+                sendRequestForLatestWeather();
+                return null;
+            }
 
-            PutDataRequest request = putDataMapRequest.asPutDataRequest();
+            public void sendRequestForLatestWeather() {
+                PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(GET_FORECAST_PATH);
+                putDataMapRequest.getDataMap().putString(TIMELINE_KEY, CURRENT_TIME_VAL);
+                putDataMapRequest.getDataMap().putLong(TIMESTAMP_KEY, new Date().getTime());
 
-            Wearable.DataApi.putDataItem(mGoogleApiClient, request)
-                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
-                        @Override
-                        public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
-                            if (dataItemResult.getStatus().isSuccess()) {
-                                Log.d(LOG_TAG, "Successfully sent step count data item ");
-                            } else {
-                                Log.d(LOG_TAG, "Failed to send step count data item ");
+                final PutDataRequest request = putDataMapRequest.asPutDataRequest();
+
+                Wearable.DataApi.putDataItem(mGoogleApiClient, request)
+                        .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                            @Override
+                            public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                                if (dataItemResult.getStatus().isSuccess()) {
+                                    Log.d(LOG_TAG, "Successfully sent forecast request ");
+                                } else {
+                                    Log.d(LOG_TAG, "Failed to send forecast request ");
+                                }
                             }
-                        }
-                    });
+                        });
+            }
+        }
+
+        private class LoadBitmapAsyncTask extends AsyncTask<Asset, Void, Bitmap> {
+
+            @Override
+            protected Bitmap doInBackground(Asset... params) {
+
+                if(params.length > 0) {
+
+                    Asset asset = params[0];
+                    InputStream assetInputStream = Wearable.DataApi.getFdForAsset(
+                            mGoogleApiClient, asset).await().getInputStream();
+
+                    if (assetInputStream == null) {
+                        Log.w(LOG_TAG, "Requested an unknown Asset.");
+                        return null;
+                    }
+                    return BitmapFactory.decodeStream(assetInputStream);
+
+                } else {
+                    Log.e(LOG_TAG, "Asset must be non-null");
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(Bitmap bitmap) {
+                if(bitmap != null) {
+                    Log.d(LOG_TAG, "Setting background image on second page..");
+                    mWeatherBitMap = bitmap;
+                }
+            }
         }
 
     }
