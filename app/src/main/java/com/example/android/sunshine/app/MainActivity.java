@@ -57,9 +57,7 @@ import com.google.android.gms.wearable.Wearable;
 
 import java.util.Date;
 
-public class MainActivity extends AppCompatActivity implements ForecastFragment.Callback,
-        GoogleApiClient.OnConnectionFailedListener, GoogleApiClient.ConnectionCallbacks,
-        DataApi.DataListener, NodeApi.NodeListener {
+public class MainActivity extends AppCompatActivity implements ForecastFragment.Callback {
 
     private static final String LOG_TAG = MainActivity.class.getSimpleName();
     private static final String DETAILFRAGMENT_TAG = "DFTAG";
@@ -73,8 +71,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
 
     private boolean mTwoPane;
     private String mLocation;
-    private GoogleApiClient mGoogleApiClient;
-    private boolean mResolvingError = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -138,31 +134,7 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
             }
         }
 
-        mGoogleApiClient = new GoogleApiClient.Builder(this)
-                .addApi(Wearable.API)
-                .addConnectionCallbacks(this)
-                .addOnConnectionFailedListener(this)
-                .build();
     }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        if (!mResolvingError) {
-            mGoogleApiClient.connect();
-        }
-    }
-
-    @Override
-    protected void onStop() {
-        if (!mResolvingError) {
-            Wearable.DataApi.removeListener(mGoogleApiClient, this);
-            Wearable.NodeApi.removeListener(mGoogleApiClient, this);
-            mGoogleApiClient.disconnect();
-        }
-        super.onStop();
-    }
-
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -251,80 +223,4 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         }
         return true;
     }
-
-    // Wearable connection related code
-
-    int counter = 700;
-    @Override
-    public void onConnected(@Nullable Bundle bundle) {
-        Log.d(LOG_TAG, "onConnected");
-        mResolvingError = false;
-        Wearable.DataApi.addListener(mGoogleApiClient, this);
-        Wearable.NodeApi.addListener(mGoogleApiClient, this);
-    }
-
-    @Override
-    public void onConnectionSuspended(int i) {
-        Log.d(LOG_TAG, "onConnectionSuspended");
-    }
-
-    @Override
-    public void onDataChanged(DataEventBuffer dataEventBuffer) {
-        Log.d(LOG_TAG, "onDataChanged " + dataEventBuffer);
-
-        for (DataEvent event : dataEventBuffer) {
-            if (event.getType() == DataEvent.TYPE_CHANGED) {
-                String path = event.getDataItem().getUri().getPath();
-                if (Utility.GET_FORECAST_PATH.equals(path)) {
-                    DataMapItem dataMapItem = DataMapItem.fromDataItem(event.getDataItem());
-                    String timeline = dataMapItem.getDataMap().getString(Utility.TIMELINE_KEY);
-                    if (Utility.CURRENT_TIME_VAL.equals(timeline)) {
-                        new SendForecastAsync().execute();
-                    }
-                }
-            }
-        }
-    }
-
-    @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-        Log.d(LOG_TAG, "onConnectionFailed");
-        if (mResolvingError) {
-            // Already attempting to resolve an error.
-            return;
-        } else if (connectionResult.hasResolution()) {
-            try {
-                mResolvingError = true;
-                connectionResult.startResolutionForResult(this, REQUEST_RESOLVE_ERROR);
-            } catch (IntentSender.SendIntentException e) {
-                // There was an error with the resolution intent. Try again.
-                mGoogleApiClient.connect();
-            }
-        } else {
-            Log.e(LOG_TAG, "Connection to Google API client has failed");
-            mResolvingError = false;
-            Wearable.DataApi.removeListener(mGoogleApiClient, this);
-            Wearable.NodeApi.removeListener(mGoogleApiClient, this);
-        }
-    }
-
-    @Override
-    public void onPeerConnected(Node node) {
-        Log.d(LOG_TAG, "onPeerConnected");
-    }
-
-    @Override
-    public void onPeerDisconnected(Node node) {
-        Log.d(LOG_TAG, "onPeerDisconnected");
-    }
-
-    class SendForecastAsync extends AsyncTask<Void, Void, Void> {
-
-        @Override
-        protected Void doInBackground(Void... voids) {
-            Utility.sendCurrentForecastToWear(MainActivity.this, mGoogleApiClient);
-            return null;
-        }
-    }
-
 }
